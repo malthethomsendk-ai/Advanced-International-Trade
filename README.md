@@ -46,3 +46,17 @@ python norway_china_nobel.py data/TPe_V202606.dta
 - Mayer, Santoni & Vicard (2023), *The CEPII Trade and Production Database*, CEPII WP 2023-01.
 - Kolstad, I. *Too big to fault? Effects of the 2010 Nobel Peace Prize on Norwegian
   exports to China and foreign policy*, CMI Working Paper WP 2016:03.
+
+## First results (Food, 2000–2022, 98 countries with domestic flows)
+
+| | PPML coef. | SE | Effect |
+|---|---|---|---|
+| Norway→China, freeze 2011–16 | −0.451*** | 0.094 | −36% |
+| Norway→China, after 2017 | −0.436*** | 0.143 | −35% |
+| Norway→Vietnam, freeze | −0.342*** | 0.071 | −29% |
+| Norway→Hong Kong, freeze | 0.197* | 0.100 | +22% |
+
+Event study (`output/fig2_event_study.png`): the effect grows from −0.30 in 2011 to
+−0.85 in 2016 and only partly recovers after 2017. Caveats: negative coefficients
+already in 2007–08 (2009 was an unusually high year, so the reference year matters),
+and the effect does not disappear after normalisation.

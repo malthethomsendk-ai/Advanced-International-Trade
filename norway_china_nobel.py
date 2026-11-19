@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import pyfixest as pf
+from pyfixest.demeaners import MapDemeaner
 
 DATA = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("TPe_V202606.dta")
 OUT = Path("output")
@@ -22,6 +23,7 @@ FREEZE = (2011, 2016)        # sanctions period
 AFTER_FROM = 2017            # after normalisation (Dec 2016)
 REF_YEAR = 2009              # reference year in the event study
 DIVERSION = ["VNM", "HKG"]   # possible re-routing destinations
+MIN_DOMESTIC_YEARS = 20      # sample: countries with domestic flows in >= 20 years
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +33,8 @@ def load(path: Path) -> pd.DataFrame:
     cols = ["year", "iso3_tp_o", "iso3_tp_d", "trade_comb", "industry"]
     if path.suffix == ".csv":
         df = pd.read_csv(path, usecols=cols)
+    elif path.suffix == ".parquet":
+        df = pd.read_parquet(path, columns=cols)
     else:  # the .dta is ~850 MB: read only the needed columns, in chunks
         df = pd.concat(ch[ch["year"].between(*YEARS)] for ch in
                        pd.read_stata(path, columns=cols, chunksize=2_000_000))
@@ -78,9 +82,17 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
         if y != REF_YEAR:
             df[f"ev_{y}"] = (nor_chn & (df["year"] == y)).astype(int)
 
+    # Sample: countries with domestic flows (X_ii > 0) in >= 20 years, as in
+    # structural gravity (Yotov et al. use 69 countries). Also drops pairs that
+    # never trade (no information for PPML with pair FE).
+    dom = df[(df["iso3_o"] == df["iso3_d"]) & (df["X"] > 0)].groupby("iso3_o")["year"].nunique()
+    keep = set(dom[dom >= MIN_DOMESTIC_YEARS].index) | {"NOR", "CHN", *DIVERSION}
+    df = df[df["iso3_o"].isin(keep) & df["iso3_d"].isin(keep)]
+
     df["exp_year"] = df["iso3_o"] + "_" + df["year"].astype(str)
     df["imp_year"] = df["iso3_d"] + "_" + df["year"].astype(str)
     df["pair"] = df["iso3_o"] + "_" + df["iso3_d"]
+    df = df[df.groupby("pair")["X"].transform("sum") > 0]
     return df
 
 
@@ -108,6 +120,7 @@ def figure(df: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 FE = "exp_year + imp_year + pair"
 VCOV = {"CRV1": "pair"}
+SOLVER = MapDemeaner(fixef_maxiter=100_000)   # default 1,000 iterations does not converge
 
 
 def pct(b: float) -> float:
@@ -118,7 +131,7 @@ def main_regression(df: pd.DataFrame):
     brdr = " + ".join(c for c in df.columns if c.startswith("brdr_"))
     div = " + ".join(f"NOR_{c}_freeze" for c in DIVERSION)
     fit = pf.fepois(f"X ~ freeze + after + {div} + {brdr} | {FE}",
-                    data=df, vcov=VCOV)
+                    data=df, vcov=VCOV, demeaner=SOLVER)
     tab = fit.tidy().loc[["freeze", "after"] + [f"NOR_{c}_freeze" for c in DIVERSION]]
     tab["effect_%"] = tab["Estimate"].apply(pct)
     print("\nMain PPML regression\n", tab.round(3))
@@ -129,7 +142,7 @@ def main_regression(df: pd.DataFrame):
 def event_study(df: pd.DataFrame):
     brdr = " + ".join(c for c in df.columns if c.startswith("brdr_"))
     ev = [c for c in df.columns if c.startswith("ev_")]
-    fit = pf.fepois(f"X ~ {' + '.join(ev)} + {brdr} | {FE}", data=df, vcov=VCOV)
+    fit = pf.fepois(f"X ~ {' + '.join(ev)} + {brdr} | {FE}", data=df, vcov=VCOV, demeaner=SOLVER)
     t = fit.tidy().loc[ev]
     t["year"] = [int(c[3:]) for c in t.index]
     t = pd.concat([t, pd.DataFrame({"Estimate": [0.0], "2.5%": [0.0],
